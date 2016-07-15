@@ -31,6 +31,7 @@ find_package(Boost REQUIRED COMPONENTS thread)
 add_message_files(
   FILES
   Temperature.msg
+  ExtremaRegion.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -40,6 +41,14 @@ add_service_files(
   FILES
     AutoFlag.srv
     SwitchTemperatureRange.srv
+    GetTemperatureAt.srv
+    GetMeanTemperature.srv
+    GetMinMaxRegion.srv
+    SetManualTemperatureRange.srv
+    GetIsothermalMin.srv
+    GetIsothermalMax.srv
+    SetPaletteScalingMethod.srv
+    SetPalette.srv
 )
 
 ## Generate added messages and services with any dependencies listed here
@@ -76,6 +85,10 @@ catkin_package(
  DEPENDS
   libudev-dev
   Boost
+)
+
+include_directories(include
+  ${catkin_INCLUDE_DIRS}
 )
 
 ###########

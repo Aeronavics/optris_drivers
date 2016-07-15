@@ -36,6 +36,8 @@
  * Author: Stefan May
  *********************************************************************/
 
+#include <stdint.h>
+
 #include "ros/ros.h"
 #include <image_transport/image_transport.h>
 
@@ -43,6 +45,17 @@
 
 #include <camera_info_manager/camera_info_manager.h>
 #include <sensor_msgs/CameraInfo.h>
+
+#include "optris_drivers/ExtremaRegion.h"
+
+#include "optris_drivers/GetTemperatureAt.h"
+#include "optris_drivers/GetMeanTemperature.h"
+#include "optris_drivers/GetMinMaxRegion.h"
+#include "optris_drivers/SetManualTemperatureRange.h"
+#include "optris_drivers/GetIsothermalMin.h"
+#include "optris_drivers/GetIsothermalMax.h"
+#include "optris_drivers/SetPaletteScalingMethod.h"
+#include "optris_drivers/SetPalette.h"
 
 unsigned char*                    _bufferThermal = NULL;
 unsigned char*                    _bufferVisible = NULL;
@@ -56,6 +69,140 @@ optris::EnumOptrisColoringPalette _palette;
 sensor_msgs::CameraInfo _camera_info;
 image_transport::CameraPublisher* _camera_info_pub = NULL;
 camera_info_manager::CameraInfoManager* _camera_info_manager = NULL;
+
+ros::NodeHandle* node;
+
+bool get_temperature_at(optris_drivers::GetTemperatureAt::Request& req, optris_drivers::GetTemperatureAt::Response& res)
+{
+  // Query the temperature of the current frame in the image builder.
+  res.temperature = static_cast<float>( _iBuilder.getTemperatureAt(static_cast<int>(req.col), static_cast<int>(req.row)) );
+  ROS_INFO("Requested Temperature at (%03d,Y=%03d): %f Degrees C.", req.col, req.row, res.temperature);
+
+  // All done.
+  return true;
+}
+
+bool get_mean_temperature(optris_drivers::GetMeanTemperature::Request& req, optris_drivers::GetTemperatureAt::Response& res)
+{
+  // Query the mean temperature of a region in the current frame in the image builder.
+  res.temperature = static_cast<float>( _iBuilder.getMeanTemperature(static_cast<int>(req.col1), static_cast<int>(req.row1), static_cast<int>(req.col2), static_cast<int>(req.row2)) );
+  ROS_INFO("Requested Mean Temperature in (%03d,%03d)-(%03d,%03d): %f Degrees C.", req.col1, req.row1, req.col2, req.row2, res.temperature);
+
+  // All done.
+  return true;
+}
+
+bool get_min_max_region(optris_drivers::GetMinMaxRegion::Request& req, optris_drivers::GetMinMaxRegion::Response& res)
+{
+  // Create a pair of Optris ExtremalRegions to read data into.
+  optris::ExtremalRegion min;
+  optris::ExtremalRegion max;
+
+  // Query the min and max temperature regions in the current frame in the imager builder.
+  _iBuilder.getMinMaxRegion(static_cast<int>(req.radius), &min, &max);
+
+  // Extract the region data into the response.
+  res.min.temperature = static_cast<float>(min.t);
+  res.min.col1 = static_cast<uint16_t>(min.u1);
+  res.min.row1 = static_cast<uint16_t>(min.v1);
+  res.min.col2 = static_cast<uint16_t>(min.u2);
+  res.min.row2 = static_cast<uint16_t>(min.v1);
+  res.max.temperature = static_cast<float>(max.t);
+  res.max.col1 = static_cast<uint16_t>(max.u1);
+  res.max.row1 = static_cast<uint16_t>(max.v1);
+  res.max.col2 = static_cast<uint16_t>(max.u2);
+  res.max.row2 = static_cast<uint16_t>(max.v1);
+
+  // All done.
+  return true;
+}
+
+bool set_manual_temperature_range(optris_drivers::SetManualTemperatureRange::Request& req, optris_drivers::SetManualTemperatureRange::Response& res)
+{
+  // Set the temperature range in the image builder.
+  _iBuilder.setManualTemperatureRange(static_cast<float>(req.min), static_cast<float>(req.max));
+  ROS_INFO("Set manual temperature scaling range: %f to %f Degrees C.", req.min, req.max);
+
+  // Update the relevant node parameters.
+  node->setParam("temperatureMin", static_cast<double>(req.min));
+  node->setParam("temperatureMax", static_cast<double>(req.max));
+
+  // We always respond true.
+  res.result = true;
+
+ // All done.
+ return true;
+}
+
+bool get_isothermal_min(optris_drivers::GetIsothermalMin::Request& req, optris_drivers::GetIsothermalMin::Response& res)
+{
+  // Query the isothermal min which the image builder is currently using.
+  res.min = static_cast<float>( _iBuilder.getIsothermalMin() );
+  ROS_INFO("Requested Isothermal Min: %f Degrees C.", res.min);
+
+  // All done.
+  return true;
+}
+
+bool get_isothermal_max(optris_drivers::GetIsothermalMax::Request& req, optris_drivers::GetIsothermalMax::Response& res)
+{
+  // Query the isothermal max which the image builder is currently using.
+  res.max = static_cast<float>( _iBuilder.getIsothermalMax() );
+  ROS_INFO("Requested Isothermal Max: %f Degrees C.", res.max);
+
+  // All done.
+  return true;
+}
+
+bool set_palette_scaling_method(optris_drivers::SetPaletteScalingMethod::Request& req, optris_drivers::SetPaletteScalingMethod::Response& res)
+{
+  // Check to make sure a valid scaling method was specified.
+  if ((req.method < 1) || (req.method > 4))
+  {
+    // The method enumeration specified wasn't valid.
+    ROS_ERROR("Invalid palette scaling method requested: %d is not in the range 1-4.", req.method);
+    res.result = false;
+    return false;
+  }
+
+  // Set the scaling method in the image builder.
+  _iBuilder.setPaletteScalingMethod(static_cast<optris::EnumOptrisPaletteScalingMethod>(req.method));
+  ROS_INFO("Set palette scaling method: Mode %d.", req.method);
+
+  // Update the relevant node parameter.
+  node->setParam("paletteScaling", static_cast<uint8_t>(req.method));
+
+  // We respond true if we changed the method successfully.
+  res.result = true;
+
+ // All done.
+ return true;
+}
+
+bool set_palette(optris_drivers::SetPalette::Request& req, optris_drivers::SetPalette::Response& res)
+{
+  // Check to maek sure a valid palette was specified.
+  if ((req.palette < 1) || (req.palette > 11))
+  {
+    // The palette enumeration specified wasn't valid.
+    ROS_ERROR("Invalid palette requested: %d is not in the range 1-11.", req.palette);
+    res.result = false;
+    return false;
+  }
+
+  // Set the palette in the image builder.
+  _iBuilder.setPalette(static_cast<optris::EnumOptrisColoringPalette>(req.palette));
+  ROS_INFO("Set palette: Mode %d.", req.palette);
+
+  // Update the relevant node paramter.
+  node->setParam("palette", static_cast<uint8_t>(req.palette));
+
+  // We response true if we changed the palette sucessfully.
+  res.result = true;
+
+  // All done.
+  return true;
+}
 
 void onThermalDataReceive(const sensor_msgs::ImageConstPtr& image)
 {
@@ -83,7 +230,7 @@ void onThermalDataReceive(const sensor_msgs::ImageConstPtr& image)
   // copy the image buffer
   img.data.resize(img.height*img.step);
   memcpy(&img.data[0], &_bufferThermal[0], img.height * img.step * sizeof(*_bufferThermal));
-  
+
   _camera_info = _camera_info_manager->getCameraInfo();
   _camera_info.header = img.header;
   _camera_info_pub->publish(img, _camera_info);
@@ -127,6 +274,7 @@ int main (int argc, char* argv[])
 
   // private node handle to support command line parameters for rosrun
   ros::NodeHandle n_("~");
+  node = &n_;
 
   int palette = 6;
   n_.getParam("palette", palette);
@@ -210,6 +358,15 @@ int main (int argc, char* argv[])
   {
      ros::param::set(key, 9);
   }
+
+  // Advertise services exposing image builder functions.
+  ros::ServiceServer service_get_temperature_at = n_.advertiseService("get_temperature_at", get_temperature_at);
+  ros::ServiceServer service_get_mean_temperature = n_.advertiseService("get_mean_temperature", get_mean_temperature);
+  ros::ServiceServer service_set_manual_temperature_range = n_.advertiseService("set_manual_temperature_range", set_manual_temperature_range);
+  ros::ServiceServer service_get_isothermal_min = n_.advertiseService("get_isothermal_min", get_isothermal_min);
+  ros::ServiceServer service_get_isothermal_max = n_.advertiseService("get_isothermal_max", get_isothermal_max);
+  ros::ServiceServer service_set_palette_scaling_method = n_.advertiseService("set_palette_scaling_method", set_palette_scaling_method);
+  ros::ServiceServer service_set_palette = n_.advertiseService("set_palette", set_palette);
 
   // specify loop rate: a meaningful value according to your publisher configuration
   ros::Rate loop_rate(looprate);

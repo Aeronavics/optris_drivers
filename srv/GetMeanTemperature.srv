@@ -1,0 +1,6 @@
+uint16 col1
+uint16 row1
+uint16 col2
+uint16 row2
+---
+float32 temperature
